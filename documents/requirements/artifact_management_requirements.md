@@ -198,6 +198,16 @@ v1/
 - 不可变字段：`id`、`fileName`、`size`、`checksum`、`contentType`、`createdAt`、`refCount`。
 - `refCount` 只能由系统的引用/解除引用机制修改，禁止用户手动编辑。
 
+### 6.4.1 解析制品存储路径
+
+**FR-ART-007a**：系统应提供接口根据 `artifactId` 解析制品文件在对象存储中的真实路径。
+
+- 接口：`getArtifactPath(artifactId: string): Promise<string>`
+- 返回制品文件在底层存储中的绝对路径（当存储后端为本地文件系统时）。
+- 路径由底层对象存储在写入时确定，无需写入元数据。
+- 若制品不存在，抛出 `ArtifactNotFoundError`。
+- 用于优化文件传输任务：调用方通过此接口获取制品路径后可直接读取文件，无需先下载到临时目录。
+
 ### 6.5 删除制品
 
 **FR-ART-008**：系统应支持删除制品。

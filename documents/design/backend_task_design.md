@@ -5,7 +5,7 @@
 > - Design: `documents/design/backend_base_task_design.md`
 > - Test cases: `documents/test/backend_base_task_test_cases.md`
 >
-> Per-task sections below describe each task's input / output / notes. The `ignoreFailure` parameter is owned by `BaseTask` for tasks whose failure is expressed by **throwing** (e.g. `SshCommandTask`, `SshFileTransferTask` and their derivatives); on such a thrown failure with `ignoreFailure: true`, BaseTask returns the standardized body `{ done: true, success: false, ignored: true, error }` rather than partial results. Tasks with an explicit internal **soft-failure return path** (e.g. `WaitSshConnectedTask` / `WaitSshReconnectTask`) keep their existing partial-result fields (`state`, `attempts`, `elapsedMs`, etc.) — see the per-task notes and `backend_base_task_design.md` §5.2.
+> Per-task sections below describe each task's input / output / notes. The `ignoreFailure` parameter is owned by `BaseTask` for tasks whose failure is expressed by **throwing** (e.g. `SshCommandTask`, `SshFileTransferTask` and their derivatives); on such a thrown failure with `ignoreFailure: true`, BaseTask returns the standardized body `{ done: true, success: false, ignored: true, error }` rather than partial results. Tasks with an explicit internal **soft-failure return path** (e.g. `WaitSshConnectedTask` / `WaitSshReconnectTask`) keep their existing partial-result fields (`state`, `attempts`, `elapsedMs`, etc.) — see the per-task notes and `backend_base_task_design.md` §2.2.
 
 All task resolver classes derive from `BaseTask`, which implements `ITaskResolver` from `flowed`:
 ```
@@ -60,7 +60,7 @@ Executes a shell command on a remote robot via raw SSH (ssh2 library). Supports 
 - Sudo wrapping: prepends `echo "<password>" | sudo -S -p ''` to each `&&`-separated segment
 - Retry uses exponential backoff: `sleep(1000 * attempt)` between attempts
 - Throws if exit code != 0 after all retries; `ignoreFailure` is no longer handled here.
-- On failure, `BaseTask` performs the `ignoreFailure` translation: when `ignoreFailure: true`, the standardized body `{ done: true, success: false, ignored: true, error }` is returned (no `stdout` / `stderr` / `exitCode`); when `ignoreFailure: false` or omitted, the original error is rethrown. See `backend_base_task_design.md` §5.2 for the migration-time output change.
+- On failure, `BaseTask` performs the `ignoreFailure` translation: when `ignoreFailure: true`, the standardized body `{ done: true, success: false, ignored: true, error }` is returned (no `stdout` / `stderr` / `exitCode`); when `ignoreFailure: false` or omitted, the original error is rethrown. See `backend_base_task_design.md` §2.2 for the migration-time output change.
 - Subclass overrides: `getSshCommand()` defines the command, `buildParams()` customizes defaults
 
 ---
@@ -295,13 +295,13 @@ Same as `SshCommandTask`.
 
 ### Overview
 
-Downloads a movebase artifact from the artifact service to a temp directory, then uploads it to the robot via SFTP.
+Resolves the artifact storage path from the artifact service and uploads the artifact file to the robot via SFTP. No intermediate temp directory is used.
 
 ### Input Parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `artifactId` | `string` | (optional) | Artifact ID to download |
+| `artifactId` | `string` | (optional) | Artifact ID to resolve and transfer |
 
 Inherits all from `SshFileTransferTask`. `sudo` forced to `true`, `remoteFilePath` hardcoded.
 
@@ -309,7 +309,7 @@ Inherits all from `SshFileTransferTask`. `sudo` forced to `true`, `remoteFilePat
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `artifactService` | `{ download(id, dest): Promise<string> }` | Service for artifact download |
+| `artifactService` | `{ getArtifactPath(id): Promise<string> }` | Service to resolve artifact storage path |
 
 ### Output Parameters
 
@@ -318,9 +318,8 @@ Same as `SshFileTransferTask`.
 ### Notes
 
 - Hardcoded remote path: `/mnt/sdcard/offlineota/alpha2_movebase_offline_package.zip`
-- Creates temp directory at `/tmp/movebase-transfer-<timestamp>`
-- Cleans up temp directory in both success and failure paths
-- If `artifactId` or `artifactService` is absent, falls through to `super.exec()` directly
+- Uses `artifactService.getArtifactPath(artifactId)` to resolve the local file path directly
+- If `artifactId` or `artifactService` is absent, falls through to `super.onExec()` directly
 
 ---
 
@@ -441,13 +440,13 @@ Same as `MatchFileContentTask`.
 
 ### Overview
 
-Downloads a BUP artifact from the artifact service to a temp directory, then uploads it to the robot via SFTP.
+Resolves the BUP artifact storage path from the artifact service and uploads the artifact file to the robot via SFTP. No intermediate temp directory is used.
 
 ### Input Parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `artifactId` | `string` | (optional) | Artifact ID to download |
+| `artifactId` | `string` | (optional) | Artifact ID to resolve and transfer |
 
 Inherits all from `SshFileTransferTask`. `sudo` forced to `true`, `remoteFilePath` hardcoded.
 
@@ -462,7 +461,7 @@ Same as `SshFileTransferTask`.
 ### Notes
 
 - Hardcoded remote path: `/mnt/sdcard/bup_offlineota/bup_offline_package.zip`
-- Creates temp directory at `/tmp/bup-transfer-<timestamp>`
+- Uses `artifactService.getArtifactPath(artifactId)` to resolve the local file path directly
 - Implementation mirrors `TransferMovebaseTask`
 
 ---
@@ -567,6 +566,81 @@ Same as `SshCommandTask`.
 
 - Hardcoded command: `rm -rf /mnt/sdcard/offlineota`
 - Used as the cleanup step in the BUP upgrade flow
+
+---
+
+## 19. TransferAEConfigTask
+
+### Overview
+
+Resolves the AE config artifact storage path from the artifact service, then uploads it to the robot via SFTP. Used as the first step of the `Deploy AE Config` flow.
+
+### Input Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `artifactId` | `string` | (optional) | Artifact ID to download |
+
+Inherits all from `SshFileTransferTask`. `sudo` forced to `true`, `remoteFilePath` hardcoded.
+
+### Context Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `artifactService` | `{ getArtifactPath(id): Promise<string> }` | Service to resolve artifact storage path |
+
+### Output Parameters
+
+Same as `SshFileTransferTask`.
+
+### Notes
+
+- Hardcoded remote path: `/tmp/ae_config_package.zip`
+- Resolves local path via `artifactService.getArtifactPath(artifactId)` (no temp directory created); falls through to parent `SshFileTransferTask.onExec` when no `artifactId`/`artifactService` is provided.
+- If `artifactId` or `artifactService` is absent, falls through to `super.exec()` directly
+
+---
+
+## 20. DeployAEConfigTask
+
+### Overview
+
+Extracts the uploaded AE config zip directly into `/opt/cosmos/bin/applet-engine` on the robot, fixes ownership to `cosmos:cosmos`, removes the original zip on `/tmp`, and restarts `cosmos-applet-engine.service`.
+
+### Input Parameters
+
+Inherits all from `SshCommandTask`. `sudo` forced to `true`, `commandTimeout` defaults to `60000`, and `retryCount` is forced to `1` because the deploy command mutates remote state and must not be retried without rerunning transfer.
+
+### Output Parameters
+
+Same as `SshCommandTask`.
+
+### Notes
+
+- Hardcoded multi-step command: verify `/opt/cosmos/bin/applet-engine` exists (fail with non-zero exit when missing), `unzip -o` the package directly into the deploy directory, `chown -R cosmos:cosmos`, remove the zip on `/tmp`, then run `systemctl restart cosmos-applet-engine.service`.
+- Does **not** auto-create the deploy target directory. If `/opt/cosmos/bin/applet-engine` is missing, the first segment exits with code 1 and stderr `Deploy target not found: /opt/cosmos/bin/applet-engine`, causing the whole chain to fail.
+- `unzip -o` overwrites same-named files inside the deploy directory without prompting and does NOT clear pre-existing files outside the zip's content set. No `/tmp/ae_config_extract` staging directory is used.
+- Used as the `deploy` step of the Deploy AE Config DAG.
+
+---
+
+## 21. DeleteAEConfigTask
+
+### Overview
+
+Removes the transferred AE config zip on the robot at `/tmp/ae_config_package.zip`. Idempotent and safe to invoke from the Deploy AE Config errorDag.
+
+### Input Parameters
+
+Inherits all from `SshCommandTask`. `sudo` forced to `true`.
+
+### Output Parameters
+
+Same as `SshCommandTask`.
+
+### Notes
+
+- Hardcoded command: `rm -f /tmp/ae_config_package.zip`
 - Implementation mirrors `DeleteMovebaseTask`
 
 ---
@@ -649,7 +723,7 @@ Waits until an SSH session can be established with the robot. The task only veri
 | `sshUsername` | `string` | `SSH_USERNAME` | SSH login username |
 | `sshPassword` | `string` | `SSH_PASSWORD` | SSH login password |
 | `timeout` | `number \| undefined` | `undefined` | Total wait timeout in milliseconds; undefined means wait indefinitely |
-| `ignoreFailure` | `boolean` | `false` | If true, on timeout this task returns a soft-failure result (`done:true, success:false, state, attempts, elapsedMs, error`) instead of throwing. Consumed by this task internally; `BaseTask`'s ignoreFailure translation does not apply to this soft-failure path. See `backend_base_task_design.md` §5.2. |
+| `ignoreFailure` | `boolean` | `false` | If true, on timeout this task returns a soft-failure result (`done:true, success:false, state, attempts, elapsedMs, error`) instead of throwing. Consumed by this task internally; `BaseTask`'s ignoreFailure translation does not apply to this soft-failure path. See `backend_base_task_design.md` 鎼?.2. |
 
 ### Output Parameters
 
@@ -664,7 +738,7 @@ Waits until an SSH session can be established with the robot. The task only veri
 
 ### Notes
 
-- `ignoreFailure` is consumed by this task internally to choose between "throw on timeout" and "return soft-failure with partial fields"; `BaseTask`'s ignoreFailure translation does not apply to the soft-failure path. See `backend_base_task_design.md` §5.2.
+- `ignoreFailure` is consumed by this task internally to choose between "throw on timeout" and "return soft-failure with partial fields"; `BaseTask`'s ignoreFailure translation does not apply to the soft-failure path. See `backend_base_task_design.md` §2.2.
 - Uses `ssh2.Client` connection readiness as the probe signal.
 - Uses `robotMdnsDomain` when present, otherwise `robotIp`.
 - Does not log passwords or other sensitive credentials.
@@ -716,14 +790,14 @@ Same as `WaitSshConnectedTask`.
 | `disconnectResult` | `ValueMap \| undefined` | Result returned by `WaitSshDisconnectedTask` |
 | `connectResult` | `ValueMap \| undefined` | Result returned by `WaitSshConnectedTask` |
 | `elapsedMs` | `number` | Total elapsed time in milliseconds |
-| `error` | `string \| undefined` | Failure message in the soft-failure return path. Populated by this task itself, not by `BaseTask`. See `backend_base_task_design.md` §5.2. |
+| `error` | `string \| undefined` | Failure message in the soft-failure return path. Populated by this task itself, not by `BaseTask`. See `backend_base_task_design.md` 鎼?.2. |
 
 ### Notes
 
 - Must call `WaitSshDisconnectedTask` followed by `WaitSshConnectedTask`; it must not duplicate the SSH probe loop.
 - A single `timeout` value is treated as the total budget for both phases. The reconnect phase receives the remaining timeout after the disconnect phase completes.
 - Undefined `timeout` means both phases wait indefinitely.
-- `ignoreFailure` is consumed by this task internally (delegating to the underlying wait phases). When true, a phase failure becomes a soft-failure return (`done:true, success:false, state, ...`) instead of a thrown error; `BaseTask`'s ignoreFailure translation does not apply to this soft-failure path. See `backend_base_task_design.md` §5.2.
+- `ignoreFailure` is consumed by this task internally (delegating to the underlying wait phases). When true, a phase failure becomes a soft-failure return (`done:true, success:false, state, ...`) instead of a thrown error; `BaseTask`'s ignoreFailure translation does not apply to this soft-failure path. See `backend_base_task_design.md` §2.2.
 - Mock variant composes the mock disconnected and connected tasks.
 
 ---
@@ -732,13 +806,13 @@ Same as `WaitSshConnectedTask`.
 
 ### Overview
 
-Downloads an Alpha2 map artifact from the artifact service to a temp directory, then uploads it to the robot via SFTP.
+Resolves the Alpha2 map artifact storage path from the artifact service and uploads the artifact file to the robot via SFTP. No intermediate temp directory is used.
 
 ### Input Parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `artifactId` | `string` | (optional) | Artifact ID to download |
+| `artifactId` | `string` | (optional) | Artifact ID to resolve and transfer |
 
 Inherits all from `SshFileTransferTask`. `sudo` forced to `true`, `remoteFilePath` hardcoded.
 
@@ -746,7 +820,7 @@ Inherits all from `SshFileTransferTask`. `sudo` forced to `true`, `remoteFilePat
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `artifactService` | `{ download(id, dest): Promise<string> }` | Service for artifact download |
+| `artifactService` | `{ getArtifactPath(id): Promise<string> }` | Service to resolve artifact storage path |
 
 ### Output Parameters
 
@@ -755,9 +829,8 @@ Same as `SshFileTransferTask`.
 ### Notes
 
 - Hardcoded remote path: `/home/developer/alpha2_map_package.zip`
-- Creates temp directory at `/tmp/alpha2map-transfer-<timestamp>`
-- Cleans up temp directory in both success and failure paths
-- If `artifactId` or `artifactService` is absent, falls through to `super.exec()` directly
+- Uses `artifactService.getArtifactPath(artifactId)` to resolve the local file path directly
+- If `artifactId` or `artifactService` is absent, falls through to `super.onExec()` directly
 - Implementation mirrors `TransferMovebaseTask`
 
 ---
@@ -922,3 +995,89 @@ Downloads a remote file from a robot to the local machine via SFTP (ssh2 library
 - Downloads via SFTP `fastGet` with progress logging every 2 seconds
 - File saved as `{localTargetDir}/{basename(remoteFilePath)}`
 - Used by the `download-alpha2-sketch` DAG with `remoteFilePath` hardcoded to `/opt/cosmos/map/preview/sketch.zip`
+
+---
+
+## 30. TransferAppTask
+
+### Overview
+
+Resolves the APK artifact storage path from the artifact service and uploads it to the robot via SFTP. Used as the first step of the `Install App` flow.
+
+### Input Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `artifactId` | `string` | (optional) | Artifact ID to resolve and transfer |
+
+Inherits all from `SshFileTransferTask`. `sudo` forced to `true`, `remoteFilePath` hardcoded.
+
+### Context Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `artifactService` | `{ getArtifactPath(id): Promise<string> }` | Service to resolve artifact storage path |
+
+### Output Parameters
+
+Same as `SshFileTransferTask`.
+
+### Notes
+
+- Hardcoded remote path: `/tmp/app_package.apk`
+- Uses `artifactService.getArtifactPath(artifactId)` to resolve the local file path directly (no temp directory created)
+- Implementation mirrors `TransferBUPTask`
+
+---
+
+## 31. InstallAppTask
+
+### Overview
+
+Performs the complete APK installation workflow on the remote robot in a single SSH command: ADB auth fix, stop kuaye service, install APK via `adb install -d -r`, restart kuaye service, and cleanup.
+
+### Input Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `commandTimeout` | `number` | `300000` (5 min) | Override for long-running install |
+
+Inherits all from `SshCommandTask`. `sudo` forced to `true`.
+
+### Output Parameters
+
+Same as `SshCommandTask`.
+
+### Notes
+
+- Combined command chain:
+  1. `rm -rf ~/.android/ ; true` — Remove ADB auth directory (failure ignored)
+  2. `adb kill-server ; true` — Kill ADB server (failure ignored)
+  3. `adb start-server ; true` — Restart ADB server (failure ignored)
+  4. `systemctl stop syriusrobotics.kuaye.service ; true` — Stop kuaye service (failure ignored)
+  5. **`adb install -d -r /tmp/app_package.apk`** — Install APK (critical step)
+  6. `systemctl start syriusrobotics.kuaye.service ; true` — Restart kuaye service (failure ignored)
+  7. `rm -f /tmp/app_package.apk ; true` — Cleanup (failure ignored)
+- Uses `-d` (downgrade) and `-r` (replace/overwrite) flags
+- Only step 5 is critical; all other steps are wrapped with `sh -c "... ; true"` to tolerate failures
+
+---
+
+## 32. CleanupAppTask
+
+### Overview
+
+Deletes the transferred APK file (`/tmp/app_package.apk`) on the remote robot. Used as the error DAG cleanup step when installation fails.
+
+### Input Parameters
+
+Inherits all from `SshCommandTask`. `sudo` forced to `true`.
+
+### Output Parameters
+
+Same as `SshCommandTask`.
+
+### Notes
+
+- Hardcoded command: `rm -f /tmp/app_package.apk`
+- Uses `-f` (force) to silently ignore missing files

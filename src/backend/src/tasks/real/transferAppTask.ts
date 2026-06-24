@@ -1,9 +1,9 @@
 import type { ValueMap } from "flowed";
 import { SshFileTransferTask, type SshFileTransferParams } from "./sshFileTransferTask.js";
 
-const REMOTE_TARGET_PATH = "/mnt/sdcard/bup_offlineota/bup_offline_package.tar.gz";
+const REMOTE_TARGET_PATH = "/tmp/app_package.apk";
 
-export class TransferBUPTask extends SshFileTransferTask {
+export class TransferAppTask extends SshFileTransferTask {
   protected override buildParams(params: ValueMap): SshFileTransferParams {
     return {
       ...super.buildParams({ ...params, sudo: true }),

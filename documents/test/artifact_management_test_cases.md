@@ -139,6 +139,24 @@
 | Expected Status | 200 |
 | Expected Response | All returned artifacts have `contentType === "application/x-firmware"` |
 
+## TC-ART-016: Get artifact storage path
+
+| Item | Value |
+|------|-------|
+| Priority | Medium |
+| Precondition | An artifact with known ID exists |
+| Input | Call `artifactService.getArtifactPath(id)` |
+| Expected Result | Returns the absolute filesystem path of the stored artifact file |
+
+## TC-ART-017: Get artifact storage path (not found)
+
+| Item | Value |
+|------|-------|
+| Priority | Medium |
+| Precondition | No artifact with the given ID |
+| Input | Call `artifactService.getArtifactPath("nonexistent")` |
+| Expected Result | Throws `ArtifactNotFoundError` |
+
 ## TC-ART-015: List Artifacts (filter by fileName substring)
 
 | Item | Value |

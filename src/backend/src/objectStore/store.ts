@@ -321,6 +321,19 @@ export async function put(
   };
 }
 
+export async function getStoragePath(pathParts: string[]): Promise<string | null> {
+  validatePathParts(pathParts);
+  if (pathParts.length === 0) return null;
+
+  const parentDir = resolvePath(pathParts.slice(0, -1));
+  const baseName = pathParts[pathParts.length - 1];
+
+  const fileName = await findFile(parentDir, baseName);
+  if (!fileName) return null;
+
+  return join(parentDir, fileName);
+}
+
 export async function remove(pathParts: string[]): Promise<boolean> {
   validatePathParts(pathParts);
   if (pathParts.length === 0) {

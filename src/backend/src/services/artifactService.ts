@@ -312,6 +312,15 @@ export class ArtifactService {
     return outputPath;
   }
 
+  async getArtifactPath(artifactId: string): Promise<string> {
+    validateArtifactId(artifactId);
+    const path = await this.obs.getStoragePath(`v1/artifacts/${artifactId}`);
+    if (!path) {
+      throw new ArtifactNotFoundError(artifactId);
+    }
+    return path;
+  }
+
   async incrementRefCount(artifactId: string): Promise<void> {
     validateArtifactId(artifactId);
     const meta = await this.readMeta(artifactId);

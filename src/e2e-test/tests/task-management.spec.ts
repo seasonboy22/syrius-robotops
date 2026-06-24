@@ -118,8 +118,8 @@ test.describe("Task Management", () => {
     const modal = appPage.locator(".cds--modal-container").filter({ hasText: "Create Task" }).first();
     await expect(modal).toBeVisible({ timeout: 5000 });
 
-    // All 5 multi-robot task types should show "Multiple robots"
-    await expect(modal.getByText("Robot selection: Multiple robots")).toHaveCount(5);
+    // All 7 multi-robot task types should show "Multiple robots" (after Deploy AE Config and Install App were added)
+    await expect(modal.getByText("Robot selection: Multiple robots")).toHaveCount(7);
 
     // Verify the single-robot task type is present
     await expect(modal.getByText("Robot selection: Single robot")).toBeVisible();
@@ -257,8 +257,8 @@ test.describe("Task Management", () => {
     const modal = appPage.locator(".cds--modal-container").filter({ hasText: "Create Task" }).first();
     await expect(modal).toBeVisible({ timeout: 5000 });
 
-    // All 5 task types should show "Multiple robots"
-    await expect(modal.getByText("Robot selection: Multiple robots")).toHaveCount(5);
+    // All 7 task types should show "Multiple robots" (after Deploy AE Config and Install App were added)
+    await expect(modal.getByText("Robot selection: Multiple robots")).toHaveCount(7);
   });
 
   test("TC-E2E-TASK-013: Update IoT Gateway Config leads to multi-robot step 2", async ({
@@ -406,5 +406,144 @@ test.describe("Task Management", () => {
     // Verify the Next button is enabled (selection confirmed)
     const nextButton = modal.getByRole("button", { name: "Next" });
     await expect(nextButton).toBeEnabled();
+  });
+
+  test("TC-E2E-AE-001: Deploy AE Config task type is visible in the create modal", async ({
+    appPage,
+  }) => {
+    await openSolutionInWorkspace(appPage, "Task Test Solution");
+    await clickSidebarTab(appPage, "Tasks");
+
+    await appPage.getByRole("button", { name: "Create your first task" }).click();
+    await appPage.waitForTimeout(500);
+
+    const modal = appPage.locator(".cds--modal-container").filter({ hasText: "Create Task" }).first();
+    await expect(modal).toBeVisible({ timeout: 5000 });
+
+    await expect(modal.getByText("Deploy AE Config")).toBeVisible();
+  });
+
+  test("TC-E2E-AE-002: Deploy AE Config selection leads to multi-robot step 2", async ({
+    appPage,
+  }) => {
+    await openSolutionInWorkspace(appPage, "Task Test Solution");
+    await clickSidebarTab(appPage, "Tasks");
+
+    await appPage.getByRole("button", { name: "Create your first task" }).click();
+    await appPage.waitForTimeout(500);
+
+    const modal = appPage.locator(".cds--modal-container").filter({ hasText: "Create Task" }).first();
+    await expect(modal).toBeVisible({ timeout: 5000 });
+
+    await modal.getByText("Deploy AE Config", { exact: true }).click();
+    await appPage.waitForTimeout(300);
+
+    await modal.getByRole("button", { name: "Next" }).click();
+    await appPage.waitForTimeout(500);
+
+    await expect(modal.getByLabel("Select all robots")).toBeVisible();
+    await expect(modal.getByLabel("Select 192.168.1.10")).toBeVisible();
+    await expect(modal.getByLabel("Select 192.168.1.11")).toBeVisible();
+  });
+
+  test("TC-E2E-AE-003: Deploy AE Config params step shows AE config package field", async ({
+    appPage,
+  }) => {
+    await openSolutionInWorkspace(appPage, "Task Test Solution");
+    await clickSidebarTab(appPage, "Tasks");
+
+    await appPage.getByRole("button", { name: "Create your first task" }).click();
+    await appPage.waitForTimeout(500);
+
+    const modal = appPage.locator(".cds--modal-container").filter({ hasText: "Create Task" }).first();
+    await expect(modal).toBeVisible({ timeout: 5000 });
+
+    await modal.getByText("Deploy AE Config", { exact: true }).click();
+    await appPage.waitForTimeout(300);
+    await modal.getByRole("button", { name: "Next" }).click();
+    await appPage.waitForTimeout(300);
+
+    await modal.getByLabel("Select 192.168.1.10").check();
+    await modal.getByRole("button", { name: "Next" }).click();
+    await appPage.waitForTimeout(500);
+
+    await expect(modal.getByText("AE config package")).toBeVisible();
+  });
+
+  test("TC-E2E-AE-004: Existing task types remain visible alongside Deploy AE Config", async ({
+    appPage,
+  }) => {
+    await openSolutionInWorkspace(appPage, "Task Test Solution");
+    await clickSidebarTab(appPage, "Tasks");
+
+    await appPage.getByRole("button", { name: "Create your first task" }).click();
+    await appPage.waitForTimeout(500);
+
+    const modal = appPage.locator(".cds--modal-container").filter({ hasText: "Create Task" }).first();
+    await expect(modal).toBeVisible({ timeout: 5000 });
+
+    await expect(modal.getByText("Upgrade BUP")).toBeVisible();
+    await expect(modal.getByText("Movebase Disk Cleanup")).toBeVisible();
+    await expect(modal.getByText("Upgrade Movebase")).toBeVisible();
+    await expect(modal.getByText("Apply Alpha2 Map")).toBeVisible();
+    await expect(modal.getByText("Update IoT Gateway Config")).toBeVisible();
+    await expect(modal.getByText("Download Alpha2 Sketch")).toBeVisible();
+    await expect(modal.getByText("Deploy AE Config")).toBeVisible();
+  });
+
+  test("TC-E2E-TASK-018: Install App task type appears in task creation modal", async ({
+    appPage,
+  }) => {
+    await openSolutionInWorkspace(appPage, "Task Test Solution");
+    await clickSidebarTab(appPage, "Tasks");
+
+    await appPage.getByRole("button", { name: "Create your first task" }).click();
+    await appPage.waitForTimeout(500);
+
+    const modal = appPage.locator(".cds--modal-container").filter({ hasText: "Create Task" }).first();
+    await expect(modal).toBeVisible({ timeout: 5000 });
+
+    await expect(modal.getByText("Install App")).toBeVisible();
+  });
+
+  test("TC-E2E-TASK-019: Install App shows multi-robot selection in task type step", async ({
+    appPage,
+  }) => {
+    await openSolutionInWorkspace(appPage, "Task Test Solution");
+    await clickSidebarTab(appPage, "Tasks");
+
+    await appPage.getByRole("button", { name: "Create your first task" }).click();
+    await appPage.waitForTimeout(500);
+
+    const modal = appPage.locator(".cds--modal-container").filter({ hasText: "Create Task" }).first();
+    await expect(modal).toBeVisible({ timeout: 5000 });
+
+    await expect(modal.getByText("Install App")).toBeVisible();
+    await expect(modal.getByText("Robot selection: Multiple robots")).toHaveCount(7);
+  });
+
+  test("TC-E2E-TASK-020: Install App leads to multi-robot step 2 then params step", async ({
+    appPage,
+  }) => {
+    await openSolutionInWorkspace(appPage, "Task Test Solution");
+    await clickSidebarTab(appPage, "Tasks");
+
+    await appPage.getByRole("button", { name: "Create your first task" }).click();
+    await appPage.waitForTimeout(500);
+
+    const modal = appPage.locator(".cds--modal-container").filter({ hasText: "Create Task" }).first();
+    await expect(modal).toBeVisible({ timeout: 5000 });
+
+    await expect(modal.getByText("Install App")).toBeVisible();
+
+    await modal.getByText("Install App", { exact: true }).first().click();
+    await appPage.waitForTimeout(300);
+
+    await modal.getByRole("button", { name: "Next" }).click();
+    await appPage.waitForTimeout(500);
+
+    await expect(modal.getByLabel("Select all robots")).toBeVisible();
+    await expect(modal.getByLabel("Select 192.168.1.10")).toBeVisible();
+    await expect(modal.getByLabel("Select 192.168.1.11")).toBeVisible();
   });
 });

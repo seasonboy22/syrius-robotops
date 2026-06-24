@@ -66,3 +66,13 @@ export { MockUpdateIotGatewayConfigTask } from "./mock/mockUpdateIotGatewayConfi
 export { SshFileDownloadTask } from "./real/sshFileDownloadTask.js";
 export type { SshFileDownloadParams, SshFileDownloadResult } from "./real/sshFileDownloadTask.js";
 export { MockSshFileDownloadTask } from "./mock/mockSshFileDownloadTask.js";
+export { TransferAEConfigTask } from "./real/transferAEConfigTask.js";
+export { MockTransferAEConfigTask } from "./mock/mockTransferAEConfigTask.js";
+export { DeployAEConfigTask } from "./real/deployAEConfigTask.js";
+export { MockDeployAEConfigTask } from "./mock/mockDeployAEConfigTask.js";
+export { DeleteAEConfigTask } from "./real/deleteAEConfigTask.js";
+export { MockDeleteAEConfigTask } from "./mock/mockDeleteAEConfigTask.js";
+export { TransferAppTask } from "./real/transferAppTask.js";
+export { MockTransferAppTask } from "./mock/mockTransferAppTask.js";
+export { InstallAppTask, CleanupAppTask } from "./real/installAppTask.js";
+export { MockInstallAppTask, MockCleanupAppTask } from "./mock/mockInstallAppTask.js";

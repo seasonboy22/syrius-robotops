@@ -86,6 +86,11 @@ class InMemoryObjectStore {
     };
   }
 
+  async getStoragePath(path: string): Promise<string | null> {
+    if (this.deleted.has(path)) return null;
+    return this.store.has(path) ? path : null;
+  }
+
   async deletePath(path: string): Promise<boolean> {
     this.deleted.add(path);
     return this.store.delete(path);
@@ -156,6 +161,10 @@ class EnhancedObjectStore {
       text: async () => str,
       arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer,
     };
+  }
+
+  async getStoragePath(path: string): Promise<string | null> {
+    return this.store.has(path) ? path : null;
   }
 
   async deletePath(path: string): Promise<boolean> {
@@ -1216,6 +1225,237 @@ describe("Movebase disk cleanup task", () => {
 
     assert.doesNotMatch(command, /echo|df -h|du -sh/);
     assert.match(command, /find \/home\/developer \/home\/factory -mindepth 1 -maxdepth 1/);
+  });
+});
+
+import {
+  TransferAEConfigTask,
+  DeployAEConfigTask,
+  DeleteAEConfigTask,
+  MockTransferAEConfigTask,
+  MockDeployAEConfigTask,
+  MockDeleteAEConfigTask,
+} from "./tasks/index.js";
+import { mkdtempSync, writeFileSync, existsSync } from "node:fs";
+import { tmpdir as osTmpdir } from "node:os";
+import { join as pathJoin } from "node:path";
+
+class TestableDeployAEConfigTask extends DeployAEConfigTask {
+  public command(params: ValueMap = {}): string {
+    return this.getSshCommand(params);
+  }
+  public params(params: ValueMap): ValueMap {
+    return this.buildParams(params) as unknown as ValueMap;
+  }
+}
+
+class TestableDeleteAEConfigTask extends DeleteAEConfigTask {
+  public command(params: ValueMap = {}): string {
+    return this.getSshCommand(params);
+  }
+  public params(params: ValueMap): ValueMap {
+    return this.buildParams(params) as unknown as ValueMap;
+  }
+}
+
+class TestableTransferAEConfigTask extends TransferAEConfigTask {
+  public lastSeenLocalFilePath: string | undefined;
+  public superCalled = false;
+  public params(params: ValueMap): ValueMap {
+    return this.buildParams(params) as unknown as ValueMap;
+  }
+  // Stub the SFTP path by overriding the parent SshFileTransferTask.onExec.
+  // This is invoked via `super.onExec(augmentedParams, context)` from
+  // TransferAEConfigTask.onExec, so we observe the augmented localFilePath.
+  public stubbedSuperOnExec(params: ValueMap): ValueMap {
+    this.superCalled = true;
+    this.lastSeenLocalFilePath = params.localFilePath as string;
+    return {
+      done: true,
+      success: true,
+      bytesTransferred: 0,
+      localChecksum: "",
+      remoteChecksum: "",
+      integrityVerified: true,
+    };
+  }
+}
+
+// Patch SshFileTransferTask.prototype.onExec for instances of
+// TestableTransferAEConfigTask only. We do this by replacing the parent
+// prototype method with a guard that delegates to stubbedSuperOnExec when
+// the call is on a Testable instance, otherwise calls the original.
+function installTransferAEStub(): () => void {
+  const parentProto = Object.getPrototypeOf(TransferAEConfigTask.prototype) as {
+    onExec: (params: ValueMap, context?: ValueMap) => Promise<ValueMap>;
+  };
+  const original = parentProto.onExec;
+  parentProto.onExec = async function (
+    this: TestableTransferAEConfigTask | object,
+    params: ValueMap,
+    context?: ValueMap
+  ) {
+    if (this instanceof TestableTransferAEConfigTask) {
+      return this.stubbedSuperOnExec(params);
+    }
+    return original.call(this, params, context);
+  };
+  return () => {
+    parentProto.onExec = original;
+  };
+}
+
+describe("Deploy AE Config tasks", () => {
+  let restoreTransferStub: (() => void) | undefined;
+
+  beforeEach(() => {
+    restoreTransferStub = installTransferAEStub();
+  });
+
+  afterEach(() => {
+    restoreTransferStub?.();
+    restoreTransferStub = undefined;
+  });
+
+  it("TC-AE-001: DeployAEConfigTask builds the multi-step deploy command with sudo", () => {
+    const task = new TestableDeployAEConfigTask();
+    const cmd = task.command({});
+
+    // Ordered fragment assertions: directly unzip the package into the deploy
+    // directory (no intermediate /tmp/ae_config_extract staging).
+    const fragments = [
+      "[ -d /opt/cosmos/bin/applet-engine ] || { echo \"Deploy target not found: /opt/cosmos/bin/applet-engine\" >&2; exit 1; }",
+      "unzip -o /tmp/ae_config_package.zip -d /opt/cosmos/bin/applet-engine",
+      "chown -R cosmos:cosmos /opt/cosmos/bin/applet-engine",
+      "systemctl restart cosmos-applet-engine.service",
+      "rm -f /tmp/ae_config_package.zip",
+    ];
+    let cursor = 0;
+    for (const f of fragments) {
+      const idx = cmd.indexOf(f, cursor);
+      assert.ok(idx !== -1, `fragment missing or out of order: ${f}`);
+      cursor = idx + f.length;
+    }
+
+    // Negative assertion: must NOT pre-create the deploy directory.
+    assert.equal(
+      cmd.includes("mkdir -p /opt/cosmos/bin/applet-engine"),
+      false,
+      "Deploy target directory must not be auto-created"
+    );
+
+    // Negative assertion: must NOT use any /tmp/ae_config_extract staging dir
+    // (we now unzip directly into the deploy directory).
+    assert.equal(
+      cmd.includes("/tmp/ae_config_extract"),
+      false,
+      "Must not use a /tmp/ae_config_extract staging directory"
+    );
+
+    // Negative assertion: must NOT use /home/developer for the upload/extract
+    // staging area (the package lives under /tmp).
+    assert.equal(
+      cmd.includes("/home/developer"),
+      false,
+      "Staging paths must live under /tmp, not /home/developer"
+    );
+
+    assert.equal(
+      cmd.includes(" reboot"),
+      false,
+      "Deploy AE Config must restart only the AE service, not the robot"
+    );
+
+    const built = task.params({ robotIp: "192.168.1.10" });
+    assert.equal(built.sudo, true);
+    assert.equal(built.commandTimeout, 60000);
+    assert.equal(built.retryCount, 1);
+  });
+
+  it("TC-AE-002: DeleteAEConfigTask returns the cleanup command and forces sudo", () => {
+    const task = new TestableDeleteAEConfigTask();
+    const cmd = task.command({});
+    assert.equal(cmd, "rm -f /tmp/ae_config_package.zip");
+    const built = task.params({ robotIp: "192.168.1.10" });
+    assert.equal(built.sudo, true);
+  });
+
+  it("TC-AE-003: TransferAEConfigTask hardcodes the remote target path", () => {
+    const task = new TestableTransferAEConfigTask();
+    const built = task.params({
+      robotIp: "192.168.1.10",
+      localFilePath: "/tmp/x.zip",
+    });
+    assert.equal(built.remoteFilePath, "/tmp/ae_config_package.zip");
+    assert.equal(built.sudo, true);
+  });
+
+  it("TC-AE-004: TransferAEConfigTask resolves artifact via getArtifactPath and forwards localFilePath", async () => {
+    const task = new TestableTransferAEConfigTask();
+    const tmpDir = mkdtempSync(pathJoin(osTmpdir(), "ae-getpath-"));
+    const stubArtifactPath = pathJoin(tmpDir, "ae_config_package.zip");
+    writeFileSync(stubArtifactPath, "stub-zip-content");
+    let receivedArtifactId: string | undefined;
+    const artifactService = {
+      async getArtifactPath(artifactId: string): Promise<string> {
+        receivedArtifactId = artifactId;
+        return stubArtifactPath;
+      },
+    };
+
+    const result = await task.exec(
+      { robotIp: "192.168.1.10", artifactId: "art-1" },
+      { artifactService }
+    );
+
+    assert.equal(result.success, true);
+    assert.equal(task.superCalled, true, "super.onExec should be invoked");
+    assert.equal(receivedArtifactId, "art-1");
+    assert.equal(
+      task.lastSeenLocalFilePath,
+      stubArtifactPath,
+      "localFilePath should equal the path returned by getArtifactPath"
+    );
+  });
+
+  it("TC-AE-005: TransferAEConfigTask falls through to super when artifactId/service is absent", async () => {
+    const task = new TestableTransferAEConfigTask();
+    const tmpDir = mkdtempSync(pathJoin(osTmpdir(), "ae-fallthrough-"));
+    const localFilePath = pathJoin(tmpDir, "x.zip");
+    writeFileSync(localFilePath, "stub");
+
+    const result = await task.exec({
+      robotIp: "192.168.1.10",
+      localFilePath,
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(task.superCalled, true);
+    assert.equal(task.lastSeenLocalFilePath, localFilePath);
+  });
+
+  it("TC-AE-006: Mock AE Config tasks return success quickly", async () => {
+    const transferMock = new MockTransferAEConfigTask();
+    const deployMock = new MockDeployAEConfigTask();
+    const deleteMock = new MockDeleteAEConfigTask();
+
+    const [t, d, x] = await Promise.all([
+      transferMock.exec({ robotIp: "192.168.1.10", artifactId: "a" }),
+      deployMock.exec({ robotIp: "192.168.1.10" }),
+      deleteMock.exec({ robotIp: "192.168.1.10" }),
+    ]);
+    assert.equal(t.success, true);
+    assert.equal(d.success, true);
+    assert.equal(x.success, true);
+  });
+
+  it("TC-AE-007: tasks/index.ts exports all six AE config task classes", () => {
+    assert.equal(typeof TransferAEConfigTask, "function");
+    assert.equal(typeof DeployAEConfigTask, "function");
+    assert.equal(typeof DeleteAEConfigTask, "function");
+    assert.equal(typeof MockTransferAEConfigTask, "function");
+    assert.equal(typeof MockDeployAEConfigTask, "function");
+    assert.equal(typeof MockDeleteAEConfigTask, "function");
   });
 });
 
@@ -2710,7 +2950,7 @@ describe("SolutionService - Import/Export", () => {
     assert.equal(meta.name, "Test Import");
   });
 
-  it("TC-SOL-EXP-002: should handle conflict resolution — rename", async () => {
+  it("TC-SOL-EXP-002: should handle conflict resolution —rename", async () => {
     const { solutionService } = createEnhancedTestServices();
     await solutionService.create({ id: "conflict-test", name: "Existing" });
 
@@ -2727,7 +2967,7 @@ describe("SolutionService - Import/Export", () => {
     assert.equal(existingMeta.name, "Existing");
   });
 
-  it("TC-SOL-EXP-003: should handle conflict resolution — overwrite", async () => {
+  it("TC-SOL-EXP-003: should handle conflict resolution —overwrite", async () => {
     const { solutionService } = createEnhancedTestServices();
     await solutionService.create({ id: "overwrite-test", name: "Existing" });
 
@@ -2742,7 +2982,7 @@ describe("SolutionService - Import/Export", () => {
     assert.equal(result.solution.description, "updated");
   });
 
-  it("TC-SOL-EXP-004: should throw on conflict resolution — cancel", async () => {
+  it("TC-SOL-EXP-004: should throw on conflict resolution —cancel", async () => {
     const { solutionService } = createEnhancedTestServices();
     await solutionService.create({ id: "cancel-test", name: "Existing" });
 
@@ -4147,6 +4387,250 @@ describe("SshFileDownloadTask - Flow Integration", () => {
     assert.ok(flow.taskResults);
     assert.ok(flow.taskResults!["download"]);
     assert.equal((flow.taskResults!["download"] as Record<string, unknown>).done, true);
+    testEngine.destroy();
+  });
+});
+
+
+import { TransferAppTask } from "./tasks/real/transferAppTask.js";
+import { MockTransferAppTask } from "./tasks/mock/mockTransferAppTask.js";
+import { InstallAppTask, CleanupAppTask } from "./tasks/real/installAppTask.js";
+import { MockInstallAppTask, MockCleanupAppTask } from "./tasks/mock/mockInstallAppTask.js";
+
+class TestableTransferAppTask extends TransferAppTask {
+  public params(params: ValueMap): ValueMap {
+    return this.buildParams(params) as unknown as ValueMap;
+  }
+}
+
+describe("TransferApp task", () => {
+  it("TC-APP-001: should upload APK to /tmp/app_package.apk", () => {
+    const task = new TestableTransferAppTask();
+    const params = task.params({
+      robotIp: "192.168.1.10",
+      artifactId: "test-apk-id",
+    });
+    assert.equal(params.remoteFilePath, "/tmp/app_package.apk");
+    assert.equal(params.sudo, true);
+  });
+});
+
+class TestableInstallAppTask extends InstallAppTask {
+  public command(): string {
+    return this.getSshCommand({});
+  }
+
+  public params(params: ValueMap): ValueMap {
+    return this.buildParams(params) as unknown as ValueMap;
+  }
+}
+
+describe("InstallApp task", () => {
+  it("TC-APP-002: should generate correct combined install command with all steps", () => {
+    const task = new TestableInstallAppTask();
+    const command = task.command();
+    assert.match(command, /adb kill-server/);
+    assert.match(command, /adb start-server/);
+    assert.match(command, /systemctl stop syriusrobotics\.kuaye\.service/);
+    assert.match(command, /adb install -d -r \/tmp\/app_package\.apk/);
+    assert.match(command, /systemctl start syriusrobotics\.kuaye\.service/);
+    assert.match(command, /rm -f \/tmp\/app_package\.apk/);
+    assert.match(command, /sh -c/);
+    assert.match(command, / && /);
+  });
+
+  it("TC-APP-003: should use sudo for the overall task", () => {
+    const task = new TestableInstallAppTask();
+    const params = task.params({ robotIp: "192.168.1.10" });
+    assert.equal(params.sudo, true);
+  });
+
+  it("TC-APP-004: should default commandTimeout to 300000ms", () => {
+    const task = new TestableInstallAppTask();
+    const params = task.params({ robotIp: "192.168.1.10" });
+    assert.equal(params.commandTimeout, 300000);
+  });
+
+  it("TC-APP-005: ADB fix steps should run before install in correct order", () => {
+    const task = new TestableInstallAppTask();
+    const command = task.command();
+    const adbKillIdx = command.indexOf("adb kill-server");
+    const adbStartIdx = command.indexOf("adb start-server");
+    const stopIdx = command.indexOf("systemctl stop");
+    const installIdx = command.indexOf("adb install");
+    assert.ok(adbKillIdx < adbStartIdx, "adb kill-server before adb start-server");
+    assert.ok(adbStartIdx < stopIdx, "ADB fix before stop service");
+    assert.ok(stopIdx < installIdx, "stop before install");
+  });
+
+  it("TC-APP-005b: non-adb commands should use sh -c wrapper to ignore failures", () => {
+    const task = new TestableInstallAppTask();
+    const command = task.command();
+    assert.match(command, /sh -c "rm -rf/);
+    assert.match(command, /sh -c "adb kill-server ; true"/);
+    assert.match(command, /sh -c "systemctl stop .+ ; true"/);
+    assert.match(command, /sh -c "systemctl start .+ ; true"/);
+    assert.match(command, /sh -c "rm -f .+ ; true"/);
+    assert.doesNotMatch(command, /sh -c "adb install/);
+  });
+});
+
+class TestableCleanupAppTask extends CleanupAppTask {
+  public command(): string {
+    return this.getSshCommand({});
+  }
+
+  public params(params: ValueMap): ValueMap {
+    return this.buildParams(params) as unknown as ValueMap;
+  }
+}
+
+describe("CleanupApp task", () => {
+  it("TC-APP-006: should generate correct cleanup command", () => {
+    const task = new TestableCleanupAppTask();
+    const command = task.command();
+    assert.equal(command, "rm -f /tmp/app_package.apk");
+  });
+
+  it("TC-APP-007: should use sudo for cleanup", () => {
+    const task = new TestableCleanupAppTask();
+    const params = task.params({ robotIp: "192.168.1.10" });
+    assert.equal(params.sudo, true);
+  });
+});
+
+describe("App install - Flow Integration", () => {
+  it("TC-APP-008: should execute 2-step install-app DAG and complete", async () => {
+    const { engine } = createEngine();
+    const registry = new ResolverRegistry();
+    registry.register("TransferAppTask", MockTransferAppTask as unknown as TaskResolverClass);
+    registry.register("InstallAppTask", MockInstallAppTask as unknown as TaskResolverClass);
+    registry.register("CleanupAppTask", MockCleanupAppTask as unknown as TaskResolverClass);
+
+    const objStore = new InMemoryObjectStore() as unknown as import("./services/objectStore.js").ObjectStore;
+    const sse = new SpySseManager() as unknown as SseManager;
+    const testEngine = new TaskFlowEngine(objStore, sse, registry);
+
+    const installDag: FlowSpec = {
+      tasks: {
+        transfer: {
+          requires: ["robotIp", "robotPort", "artifactId"],
+          provides: ["transfer_done"],
+          resolver: {
+            name: "TransferAppTask",
+            params: {
+              robotIp: "robotIp",
+              robotPort: "robotPort",
+              artifactId: "artifactId",
+            },
+            results: { done: "transfer_done" },
+          },
+        },
+        install: {
+          requires: ["robotIp", "robotPort", "transfer_done"],
+          provides: ["install_done"],
+          resolver: {
+            name: "InstallAppTask",
+            params: {
+              robotIp: "robotIp",
+              robotPort: "robotPort",
+            },
+            results: { done: "install_done" },
+          },
+        },
+      },
+    };
+
+    const summary = await testEngine.createFlow("internal", installDag, {
+      robotIp: "192.168.1.10",
+      robotPort: 22,
+      artifactId: "test-apk",
+    });
+    await waitForFlowComplete(testEngine, summary.id);
+
+    const flow = testEngine.getFlow(summary.id);
+    assert.ok(flow);
+    assert.equal(flow.state, "COMPLETED");
+    assert.equal(flow.taskStates["transfer"], "COMPLETED");
+    assert.equal(flow.taskStates["install"], "COMPLETED");
+    testEngine.destroy();
+  });
+
+  it("TC-APP-009: error DAG cleanup should run when install fails", async () => {
+    class FailingMockInstallTask extends MockInstallAppTask {
+      protected override async onExec(_params: ValueMap): Promise<ValueMap> {
+        throw new Error("Simulated adb install failure");
+      }
+    }
+
+    const { engine } = createEngine();
+    const registry = new ResolverRegistry();
+    registry.register("TransferAppTask", MockTransferAppTask as unknown as TaskResolverClass);
+    registry.register("InstallAppTask", FailingMockInstallTask as unknown as TaskResolverClass);
+    registry.register("CleanupAppTask", MockCleanupAppTask as unknown as TaskResolverClass);
+
+    const objStore = new InMemoryObjectStore() as unknown as import("./services/objectStore.js").ObjectStore;
+    const sse = new SpySseManager() as unknown as SseManager;
+    const testEngine = new TaskFlowEngine(objStore, sse, registry);
+
+    const installDag: FlowSpec = {
+      tasks: {
+        transfer: {
+          requires: ["robotIp", "robotPort", "artifactId"],
+          provides: ["transfer_done"],
+          resolver: {
+            name: "TransferAppTask",
+            params: {
+              robotIp: "robotIp",
+              robotPort: "robotPort",
+              artifactId: "artifactId",
+            },
+            results: { done: "transfer_done" },
+          },
+        },
+        install: {
+          requires: ["robotIp", "robotPort", "transfer_done"],
+          provides: ["install_done"],
+          resolver: {
+            name: "InstallAppTask",
+            params: {
+              robotIp: "robotIp",
+              robotPort: "robotPort",
+            },
+            results: { done: "install_done" },
+          },
+        },
+      },
+    };
+
+    const cleanupDag: FlowSpec = {
+      tasks: {
+        error_cleanup: {
+          provides: ["error_cleanup_done"],
+          resolver: {
+            name: "CleanupAppTask",
+            params: {
+              robotIp: "robotIp",
+              robotPort: "robotPort",
+            },
+            results: { done: "error_cleanup_done" },
+          },
+        },
+      },
+    };
+
+    const summary = await testEngine.createFlow("internal", installDag, {
+      robotIp: "192.168.1.10",
+      robotPort: 22,
+      artifactId: "test-apk",
+    }, undefined, cleanupDag);
+    await waitForFlowComplete(testEngine, summary.id, 15000);
+
+    const flow = testEngine.getFlow(summary.id);
+    assert.ok(flow);
+    assert.equal(flow.state, "FAILED");
+    assert.equal(flow.phase, "error");
+    assert.ok(sse.hasEvent("task-flow-engine/error-handling-completed"));
     testEngine.destroy();
   });
 });

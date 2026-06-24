@@ -70,6 +70,10 @@ export class ObjectStore {
     }
   }
 
+  async getStoragePath(path: string): Promise<string | null> {
+    return store.getStoragePath(parsePath(path));
+  }
+
   async get(path: string): Promise<StoreResponse> {
     const result = await store.get(parsePath(path));
     if (!result || result.type !== "file") {
