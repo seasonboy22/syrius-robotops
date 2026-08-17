@@ -4613,6 +4613,10 @@ class TestableInstallAppTask extends InstallAppTask {
   public params(params: ValueMap): ValueMap {
     return this.buildParams(params) as unknown as ValueMap;
   }
+
+  public checkSuccess(result: { stdout: string; stderr: string; exitCode: number | null | undefined }): boolean {
+    return this.isCommandSuccessful(result as import("./tasks/real/sshCommandTask.js").SshCommandResult);
+  }
 }
 
 describe("InstallApp task", () => {
@@ -4668,6 +4672,34 @@ describe("InstallApp task", () => {
     const task = new TestableInstallAppTask();
     const command = task.command();
     assert.match(command, /rm -f \/tmp\/app_package\.apk/);
+  });
+
+  it("TC-APP-005e: should fix ~/.android/ ownership for the sudo caller", () => {
+    const task = new TestableInstallAppTask();
+    const command = task.command();
+    const elseIdx = command.indexOf("else");
+    const elseBranch = command.slice(elseIdx);
+    assert.match(elseBranch, /chown -R "\$\{SUDO_USER:-\$USER\}:\$\{SUDO_USER:-\$USER\}" ~\/\.android\//);
+  });
+
+  it("TC-APP-005f: should treat undefined exit code as success when adb reports Success", () => {
+    const task = new TestableInstallAppTask();
+    assert.ok(
+      task.checkSuccess({ stdout: "Performing Streamed Install\nSuccess", stderr: "", exitCode: undefined }),
+      "undefined exit code with Success in stdout should be accepted"
+    );
+    assert.ok(
+      !task.checkSuccess({ stdout: "Performing Streamed Install\nFailure", stderr: "", exitCode: undefined }),
+      "undefined exit code without Success should still fail"
+    );
+    assert.ok(
+      task.checkSuccess({ stdout: "", stderr: "", exitCode: 0 }),
+      "exit code 0 should be accepted"
+    );
+    assert.ok(
+      !task.checkSuccess({ stdout: "", stderr: "", exitCode: 1 }),
+      "non-zero exit code should fail"
+    );
   });
 });
 

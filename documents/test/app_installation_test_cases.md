@@ -102,6 +102,34 @@ Test execution command: `npm --workspace backend run test` (from `src/`)
 **Expected Result**:
 - Command contains `rm -f /tmp/app_package.apk`
 
+### TC-APP-005e: InstallApp fixes ~/.android/ ownership after ADB reset
+
+**Precondition**: None
+
+**Test Steps**:
+1. Create `TestableInstallAppTask` instance
+2. Get the generated command
+
+**Expected Result**:
+- `else` branch contains `chown -R "${SUDO_USER:-$USER}:${SUDO_USER:-$USER}" ~/.android/`
+
+### TC-APP-005f: InstallApp treats undefined exit code as success when adb reports Success
+
+**Precondition**: None
+
+**Test Steps**:
+1. Create `TestableInstallAppTask` instance
+2. Call `isCommandSuccessful()` with `exitCode: undefined` and stdout containing `Success`
+3. Call `isCommandSuccessful()` with `exitCode: undefined` and stdout not containing `Success`
+4. Call `isCommandSuccessful()` with `exitCode: 0`
+5. Call `isCommandSuccessful()` with `exitCode: 1`
+
+**Expected Result**:
+- `undefined` exit code with `Success` in stdout returns `true`
+- `undefined` exit code without `Success` returns `false`
+- `exitCode: 0` returns `true`
+- `exitCode: 1` returns `false`
+
 ### TC-APP-006: CleanupApp generates correct cleanup command
 
 **Precondition**: None

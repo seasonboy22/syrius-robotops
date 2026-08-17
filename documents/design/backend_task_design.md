@@ -1138,10 +1138,11 @@ Same as `SshCommandTask`.
 - Combined command is wrapped in `sh -c '...'` and executed with `sudo`.
 - At runtime it checks `adb devices` for an already-authorized device (`\s+device$`):
   - **Authorized path**: stop kuaye service, install APK, restart kuaye service.
-  - **Unauthorized path**: reset ADB auth directory and ADB server, wait 3 seconds, stop kuaye service, install APK, restart kuaye service.
+  - **Unauthorized path**: reset ADB auth directory and ADB server, fix `~/.android/` ownership for the sudo caller, wait 3 seconds, stop kuaye service, install APK, restart kuaye service.
 - ADB reset steps run only when no authorized device is detected, avoiding unnecessary re-authorization prompts on robots that auto-authorize.
 - Uses `-d` (downgrade) and `-r` (replace/overwrite) flags
 - The final `rm -f /tmp/app_package.apk || true` cleanup runs in both branches
+- If the SSH stream closes without an exit code but `adb install` output contains `Success`, the task is treated as successful. This handles cases where stopping or restarting `syriusrobotics.kuaye.service` drops the SSH session even though the APK was installed.
 
 ---
 

@@ -20,7 +20,7 @@ export interface SshCommandParams {
 export interface SshCommandResult {
   stdout: string;
   stderr: string;
-  exitCode: number | null;
+  exitCode: number | null | undefined;
 }
 
 function resolveHost(params: SshCommandParams): string {
@@ -127,6 +127,10 @@ export class SshCommandTask extends BaseTask {
     });
   }
 
+  protected isCommandSuccessful(result: SshCommandResult): boolean {
+    return result.exitCode === 0;
+  }
+
   protected override async onExec(params: ValueMap, _context?: ValueMap): Promise<ValueMap> {
     const sshParams = this.buildParams(params);
     const host = resolveHost(sshParams);
@@ -152,7 +156,7 @@ export class SshCommandTask extends BaseTask {
           commandTimeout
         );
 
-        if (result.exitCode !== 0) {
+        if (!this.isCommandSuccessful(result)) {
           throw new Error(
             `SSH command exited with code ${result.exitCode}. Output logged above.`
           );

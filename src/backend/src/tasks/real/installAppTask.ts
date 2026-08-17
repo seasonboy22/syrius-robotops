@@ -1,5 +1,5 @@
 import type { ValueMap } from "flowed";
-import { SshCommandTask, type SshCommandParams } from "./sshCommandTask.js";
+import { SshCommandTask, type SshCommandParams, type SshCommandResult } from "./sshCommandTask.js";
 
 const INSTALL_SCRIPT = `
 if adb devices | grep -qE "\\s+device$"; then
@@ -12,6 +12,7 @@ else
   rm -rf ~/.android/ || true
   adb kill-server || true
   adb start-server || true
+  chown -R "\${SUDO_USER:-$USER}:\${SUDO_USER:-$USER}" ~/.android/ || true
   sleep 3
   systemctl stop syriusrobotics.kuaye.service || true
   adb install -d -r /tmp/app_package.apk
@@ -33,5 +34,19 @@ export class InstallAppTask extends SshCommandTask {
 
   protected override getSshCommand(_params: ValueMap): string {
     return INSTALL_COMMAND;
+  }
+
+  protected override isCommandSuccessful(result: SshCommandResult): boolean {
+    if (super.isCommandSuccessful(result)) {
+      return true;
+    }
+    if (result.exitCode === undefined && result.stdout.includes("Success")) {
+      this.log.info(
+        { exitCode: result.exitCode },
+        "ADB install reported Success despite undefined exit code, treating as success"
+      );
+      return true;
+    }
+    return false;
   }
 }
